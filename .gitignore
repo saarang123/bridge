@@ -22,3 +22,4 @@ ios/**/.swiftpm/
 # Local config (user-specific paths, secrets)
 .local/
 CLAUDE.local.md
+.codex-file

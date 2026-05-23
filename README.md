@@ -1,13 +1,13 @@
 # Bridge
 
-A personal services platform that exposes long-running processes on a home server to two clients: a phone app, and local LLM agents (Claude Code, Codex, etc.).
+A personal services platform that exposes long-running processes on a private server to two clients: a phone app, and local LLM agents (Claude Code, Codex, etc.).
 
 The same backend powers both — the phone gets HTTPS endpoints rendered as mini-app tiles; LLM agents get MCP tools they can call autonomously. Registering a new mini-app exposes its actions to both surfaces at once.
 
 > **Project type:** Personal infra. Open-source target — framework will be released once anchor mini-apps stabilize. Until then, internal-only.
 > **Read alongside:** the podcast mini-app at [`../podcast-this/`](../podcast-this/).
-> **Hosting model:** server on a home machine (e.g. Mac mini) reachable from a phone via Tailscale, and from local LLM agents via stdio MCP transport.
-> **Status:** pre-implementation. Scope locked, code not started.
+> **Hosting model:** server on a private machine reachable from a phone over a private network, and from local LLM agents via stdio MCP transport.
+> **Status:** early implementation.
 
 ---
 
@@ -30,7 +30,7 @@ Both surfaces hit the same endpoints. The phone renders results as UI; the LLM u
 
 ```
 ┌──────────────────┐                       ┌─────────────────────────┐
-│  iPhone          │ ─── Tailscale ──────▶ │  Home server            │
+│  iPhone          │ ─ private network ──▶ │  Private server         │
 │  Bridge app      │     HTTPS             │  ┌───────────────────┐  │
 │  (SwiftUI)       │                       │  │ Bridge core       │  │
 └──────────────────┘                       │  │  - HTTP API       │  │
@@ -54,7 +54,7 @@ A single Python process exposes the same action registry over two transports: Fa
 - **iOS app**: SwiftUI shell, TestFlight Internal Testing. One device.
 - **Mini-app registry**: each mini-app registers `{name, icon, actions[]}` at startup; both HTTP and MCP layers expose its actions.
 - **First mini-app**: podcast (see [`../podcast-this/`](../podcast-this/)).
-- **Auth**: Tailscale-gated for phone, local stdio for MCP. No public exposure.
+- **Auth**: private-network gated for phone, local stdio for MCP. No public exposure.
 
 ## 4. Deferred to v1+
 
@@ -68,6 +68,8 @@ A single Python process exposes the same action registry over two transports: Fa
 | Public OSS release | After podcast + terminal mini-apps stabilize |
 
 ## 5. Mini-app protocol
+
+Detailed spec: [`docs/mini-app-protocol.md`](docs/mini-app-protocol.md).
 
 Each mini-app declares actions in code:
 
@@ -86,6 +88,11 @@ class Podcast:
 - An MCP tool (`podcast.list_episodes`, `podcast.generate_episode`) with a JSON schema derived from the function signature.
 
 The phone shell renders each action by its `ui_kind` (`list | detail | trigger | webview | custom`). LLM agents discover actions via MCP `list_tools`.
+
+The v0 deployment should stay private by default: private-network HTTP/HTTPS for the phone,
+stdio MCP for local agents. The protocol itself should not depend on Tailscale, so the
+same route and schema surface can later sit behind public DNS plus a stronger auth
+boundary if that becomes worth the operational tradeoff.
 
 ## 6. Project structure (planned)
 
@@ -108,17 +115,45 @@ bridge/
 ## 7. Practical commands
 
 ```bash
+# Inspect the current generated mini-app manifest
+cd /path/to/bridge/server
+PYTHONPATH=src python3 -m bridge.cli manifest
+
+# Run server tests
+cd /path/to/bridge/server
+PYTHONPATH=src python3 -m unittest discover -s tests
+
 # Server: serve HTTP + MCP (stdio) in one process
-cd ~/Documents/bridge/server
+cd /path/to/bridge/server
 uv run bridge serve
 
+# Phone over Tailscale/LAN: bind outside localhost
+uv run bridge serve --host 0.0.0.0 --port 8080
+
+# Use mock podcast data if ../podcast-this is unavailable
+BRIDGE_PODCAST_MODE=mock uv run bridge serve
+
+# Real Podcast This integration defaults to ../podcast-this/cli.
+# Override paths/URLs as needed:
+BRIDGE_PODCAST_CLI=/path/to/podcast-this/cli \
+BRIDGE_PODCAST_SOURCE_ROOTS=/path/to/source-docs \
+BRIDGE_PODCAST_AUDIO_URL_BASE=http://<private-host>:8000/audio \
+BRIDGE_PODCAST_FEED_URL=http://<private-host>:8000/feed/feed.xml \
+uv run bridge serve --host 0.0.0.0 --port 8080
+
 # Add Bridge as an MCP server for Claude Code locally
-claude mcp add bridge -- uv run --directory ~/Documents/bridge/server bridge mcp
+claude mcp add bridge -- uv run --directory /path/to/bridge/server bridge mcp
 
 # iOS app
-open ios/Bridge.xcodeproj
+cd /path/to/bridge/ios
+xcodegen generate
+open Bridge.xcodeproj
 # Build & deploy: Xcode → Product → Archive → Distribute → TestFlight
 ```
+
+The iOS shell is intentionally generic but podcast-biased for v0: it has Apps,
+Active, and Settings tabs, highlights the `podcast` mini-app when present, and can
+submit a `generate_episode(source_uri)` action while Podcast This is being wired in.
 
 ## 8. Why this shape (rationale, abridged)
 
